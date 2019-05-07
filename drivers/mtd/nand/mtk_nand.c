@@ -1153,7 +1153,7 @@ static int mtk_nfc_update_ecc_stats(struct mtd_info *mtd, u8 *buf, u32 start,
 	if (rc) {
 		memset(buf, 0xff, sectors * chip->ecc.size);
 		for (i = 0; i < sectors; i++)
-			memset(oob_ptr(chip, i), 0xff, mtk_nand->fdm.reg_size);
+			memset(oob_ptr(chip, start + i), 0xff, mtk_nand->fdm.reg_size);
 		return 0;
 	}
 
