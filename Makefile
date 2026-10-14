@@ -1,7 +1,7 @@
 VERSION = 4
 PATCHLEVEL = 9
 SUBLEVEL = 200
-EXTRAVERSION =
+EXTRAVERSION = -Pure-Breakdown-v1
 NAME = Roaring Lionus
 
 CFLAGS = -Wall -Wpointer-arith -Wno-unused -Wno-maybe-uninitialized
