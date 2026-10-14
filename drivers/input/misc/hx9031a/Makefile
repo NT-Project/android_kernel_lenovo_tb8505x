@@ -1,0 +1,1 @@
+obj-$(CONFIG_INPUT_SAR_HX9031A) += hx9031a.o

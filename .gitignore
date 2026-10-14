@@ -1,0 +1,16 @@
+out/
+out-*/
+*.o
+*.a
+*.so
+*.ko
+*.cmd
+*.mod
+*.order
+*.symvers
+Module.symvers
+modules.order
+.tmp_*
+*.tmp
+*.log
+Build_log.txt

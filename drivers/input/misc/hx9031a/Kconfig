@@ -1,0 +1,7 @@
+config INPUT_SAR_HX9031A
+	tristate "TianYiHeXin hx9031a SAR device for MediaTek situation"
+	default n
+	help
+	  TianYiHeXin sar device,
+	  usually portable and electronic or electromechanical,
+	  that detect distance between the body and device .
