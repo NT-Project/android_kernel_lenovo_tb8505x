@@ -153,6 +153,15 @@ jobs:
           echo "$CLANG_BIN" >> "$GITHUB_PATH"
           echo "$GCC_BIN" >> "$GITHUB_PATH"
 
+          # Old Android Clang expects unprefixed external tools when
+          # --prefix points directly at the GCC bin directory.
+          ln -sf aarch64-linux-android-as "$GCC_BIN/as"
+          ln -sf aarch64-linux-android-ld "$GCC_BIN/ld"
+
+          echo "=== GNU cross tools ==="
+          ls -l "$GCC_BIN/as" "$GCC_BIN/ld"
+          "$GCC_BIN/as" --version
+
       - name: Verify toolchain
         shell: bash
         run: |
