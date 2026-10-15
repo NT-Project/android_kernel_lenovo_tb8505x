@@ -1,0 +1,326 @@
+name: Pure-Breakdown Auto Build & Release
+
+on:
+  push:
+    branches:
+      - pure-breakdown-v1
+      - pure-breakdown-v1-oc
+      - pure-breakdown-v1-ksu-umount-oc
+    paths-ignore:
+      - "README.md"
+      - "README.txt"
+      - "docs/**"
+      - ".github/**"
+      - "**/*.md"
+
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "Create GitHub prerelease after a successful manual build"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: kernel-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ${{ github.ref_name }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 20
+          submodules: recursive
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc \
+            bison \
+            build-essential \
+            ca-certificates \
+            curl \
+            file \
+            flex \
+            git \
+            libelf-dev \
+            libncurses-dev \
+            libssl-dev \
+            rsync \
+            unzip \
+            xz-utils \
+            zip
+
+      - name: Install Python 2.7
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          if command -v python2 >/dev/null 2>&1; then
+            python2 --version
+            exit 0
+          fi
+
+          PY2_PREFIX="$HOME/.local/python2"
+
+          if [ ! -x "$PY2_PREFIX/bin/python2.7" ]; then
+            curl -fsSL \
+              https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz \
+              -o /tmp/Python-2.7.18.tgz
+
+            tar -xzf /tmp/Python-2.7.18.tgz -C /tmp
+
+            pushd /tmp/Python-2.7.18
+            ./configure \
+              --prefix="$PY2_PREFIX" \
+              --without-ensurepip
+            make -j2
+            make install
+            popd
+          fi
+
+          ln -sf "$PY2_PREFIX/bin/python2.7" "$PY2_PREFIX/bin/python2"
+          echo "$PY2_PREFIX/bin" >> "$GITHUB_PATH"
+
+          "$PY2_PREFIX/bin/python2" --version
+
+      - name: Select build variant
+        id: variant
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          case "${GITHUB_REF_NAME}" in
+            pure-breakdown-v1)
+              VARIANT="stock"
+              RELEASE_NAME="Pure-Breakdown v1 Auto"
+              LOCAL_VERSION=""
+              ;;
+
+            pure-breakdown-v1-oc)
+              VARIANT="oc"
+              RELEASE_NAME="Pure-Breakdown v1 OC Auto"
+              LOCAL_VERSION=""
+              ;;
+
+            pure-breakdown-v1-ksu-umount-oc)
+              VARIANT="ksu-umount-oc"
+              RELEASE_NAME="Pure-Breakdown v1 KSU_umount_OC Auto"
+              LOCAL_VERSION="-KSU_umount_OC"
+              ;;
+
+            *)
+              echo "Unsupported branch: ${GITHUB_REF_NAME}" >&2
+              exit 1
+              ;;
+          esac
+
+          SHORT_SHA="${GITHUB_SHA::8}"
+          BUILD_TIME="$(date -u +'%Y%m%d-%H%M%S')"
+          TAG="auto-${VARIANT}-${BUILD_TIME}-${SHORT_SHA}"
+
+          echo "variant=$VARIANT" >> "$GITHUB_OUTPUT"
+          echo "release_name=$RELEASE_NAME" >> "$GITHUB_OUTPUT"
+          echo "local_version=$LOCAL_VERSION" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Verify toolchain
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          test -x prebuilds/toolchain/clang-r353983c/bin/clang
+          test -x prebuilds/toolchain/aarch64-linux-android-4.9/bin/aarch64-linux-android-gcc
+
+          prebuilds/toolchain/clang-r353983c/bin/clang --version
+          prebuilds/toolchain/aarch64-linux-android-4.9/bin/aarch64-linux-android-gcc --version
+
+      - name: Configure kernel
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CROSS_COMPILE="$PWD/prebuilds/toolchain/aarch64-linux-android-4.9/bin/aarch64-linux-android-"
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CC="$PWD/prebuilds/toolchain/clang-r353983c/bin/clang"
+
+          make \
+            O=out \
+            ARCH=arm64 \
+            akita_row_call_defconfig
+
+      - name: Build kernel
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CROSS_COMPILE="$PWD/prebuilds/toolchain/aarch64-linux-android-4.9/bin/aarch64-linux-android-"
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CC="$PWD/prebuilds/toolchain/clang-r353983c/bin/clang"
+
+          make -j4 \
+            O=out \
+            ARCH=arm64 \
+            SUBARCH=arm64 \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            CC="$CC" \
+            LOCALVERSION="${{ steps.variant.outputs.local_version }}" \
+            python=python2 \
+            EXTRA_CFLAGS="-Wno-error -Wno-error=strict-prototypes"
+
+      - name: Validate build output
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          IMAGE="out/arch/arm64/boot/Image.gz-dtb"
+
+          test -s "$IMAGE"
+          file "$IMAGE"
+          sha256sum "$IMAGE"
+
+          echo
+          echo "Kernel release:"
+          make -s \
+            O=out \
+            ARCH=arm64 \
+            kernelrelease
+
+      - name: Prepare release files
+        id: package
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          mkdir -p dist
+
+          BASE="Pure-Breakdown-TB8505X-${{ steps.variant.outputs.variant }}-${{ steps.variant.outputs.short_sha }}"
+
+          cp \
+            out/arch/arm64/boot/Image.gz-dtb \
+            "dist/${BASE}-Image.gz-dtb"
+
+          cp \
+            out/.config \
+            "dist/${BASE}.config"
+
+          (
+            cd dist
+            sha256sum \
+              "${BASE}-Image.gz-dtb" \
+              "${BASE}.config" \
+              > "${BASE}.sha256"
+          )
+
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+
+      - name: Generate changelog
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VARIANT="${{ steps.variant.outputs.variant }}"
+          CURRENT_TAG="${{ steps.variant.outputs.tag }}"
+
+          LAST_TAG=""
+
+          while IFS= read -r TAG; do
+            if git merge-base --is-ancestor "$TAG" HEAD 2>/dev/null; then
+              LAST_TAG="$TAG"
+              break
+            fi
+          done < <(
+            git tag \
+              --list "auto-${VARIANT}-*" \
+              --sort=-creatordate
+          )
+
+          {
+            echo "# ${{ steps.variant.outputs.release_name }}"
+            echo
+            echo "- Branch: \`${GITHUB_REF_NAME}\`"
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Auto tag: \`${CURRENT_TAG}\`"
+            echo "- Device: Lenovo Tab M8 TB-8505X"
+            echo "- Kernel base: Linux 4.9.200"
+            echo
+
+            echo "## Changes"
+            echo
+
+            if [ -n "$LAST_TAG" ]; then
+              echo "Changes since \`$LAST_TAG\`:"
+              echo
+              git log \
+                --no-merges \
+                --pretty=format:'- %s (`%h`) — %an' \
+                "${LAST_TAG}..HEAD"
+            else
+              echo "No previous auto-release tag found. Recent commits:"
+              echo
+              git log \
+                --no-merges \
+                -n 20 \
+                --pretty=format:'- %s (`%h`) — %an'
+            fi
+
+            echo
+            echo
+            echo "## Files"
+            echo
+            echo "- \`${{ steps.package.outputs.base }}-Image.gz-dtb\`"
+            echo "- \`${{ steps.package.outputs.base }}.config\`"
+            echo "- \`${{ steps.package.outputs.base }}.sha256\`"
+            echo
+            echo "> Auto-generated CI build. Keep a known-good stock boot image and working recovery before flashing."
+          } > release-notes.md
+
+          cat release-notes.md
+
+      - name: Upload CI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pure-Breakdown-${{ steps.variant.outputs.variant }}-${{ steps.variant.outputs.short_sha }}
+          path: |
+            dist/*
+            release-notes.md
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create auto tag and GitHub prerelease
+        if: >
+          github.event_name == 'push' ||
+          (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+
+          gh release create \
+            "${{ steps.variant.outputs.tag }}" \
+            dist/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${GITHUB_SHA}" \
+            --title "${{ steps.variant.outputs.release_name }} | ${{ steps.variant.outputs.short_sha }}" \
+            --notes-file release-notes.md \
+            --prerelease
