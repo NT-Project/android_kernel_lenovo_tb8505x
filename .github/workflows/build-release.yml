@@ -110,18 +110,27 @@ jobs:
               VARIANT="stock"
               RELEASE_NAME="Pure-Breakdown v1 Auto"
               LOCAL_VERSION=""
+              KERNEL_STRING="Pure-Breakdown v1 | TB-8505X | Linux 4.9.200"
+              BANNER_NAME="Pure-Breakdown Kernel v1"
+              FOOTER_NAME="Pure-Breakdown v1"
               ;;
 
             pure-breakdown-v1-oc)
               VARIANT="oc"
               RELEASE_NAME="Pure-Breakdown v1 OC Auto"
               LOCAL_VERSION=""
+              KERNEL_STRING="Pure-Breakdown v1 OC | TB-8505X | 2.201GHz/730MHz"
+              BANNER_NAME="Pure-Breakdown Kernel v1 OC"
+              FOOTER_NAME="Pure-Breakdown v1 OC"
               ;;
 
             pure-breakdown-v1-ksu-umount-oc)
               VARIANT="ksu-umount-oc"
               RELEASE_NAME="Pure-Breakdown v1 KSU_umount_OC Auto"
               LOCAL_VERSION="-KSU_umount_OC"
+              KERNEL_STRING="Pure-Breakdown v1 KSU_umount_OC | TB-8505X"
+              BANNER_NAME="Pure-Breakdown v1 KSU+Umount+OC"
+              FOOTER_NAME="Pure-Breakdown KSU+Umount+OC"
               ;;
 
             *)
@@ -137,6 +146,9 @@ jobs:
           echo "variant=$VARIANT" >> "$GITHUB_OUTPUT"
           echo "release_name=$RELEASE_NAME" >> "$GITHUB_OUTPUT"
           echo "local_version=$LOCAL_VERSION" >> "$GITHUB_OUTPUT"
+          echo "kernel_string=$KERNEL_STRING" >> "$GITHUB_OUTPUT"
+          echo "banner_name=$BANNER_NAME" >> "$GITHUB_OUTPUT"
+          echo "footer_name=$FOOTER_NAME" >> "$GITHUB_OUTPUT"
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
@@ -147,14 +159,8 @@ jobs:
 
           sudo sysctl -w vm.mmap_rnd_bits=28
 
-          CLANG_BIN="$PWD/prebuilds/toolchain/clang-r353983c/bin"
           GCC_BIN="$PWD/prebuilds/toolchain/aarch64-linux-android-4.9/bin"
 
-          # Do NOT add GCC_BIN to PATH.
-          # Host tools (fixdep, modpost, etc.) must keep using /usr/bin/as and /usr/bin/ld.
-
-          # Legacy Android Clang uses --prefix=<gcc-bin-dir> together with
-          # -no-integrated-as and looks for plain "as"/"ld" inside that directory.
           ln -sf aarch64-linux-android-as "$GCC_BIN/as"
           ln -sf aarch64-linux-android-ld "$GCC_BIN/ld"
 
@@ -185,10 +191,6 @@ jobs:
 
           "$CLANG" --version
           "$GCC" --version
-
-          echo "=== host dependencies ==="
-          ldd "$CLANG" || true
-          ldd "$GCC" || true
 
           echo "=== stack protector compiler smoke test ==="
           cat > /tmp/cc-smoke.c <<'EOC'
@@ -240,6 +242,7 @@ jobs:
           export CC="$PWD/prebuilds/toolchain/clang-r353983c/bin/clang"
 
           echo "CPU cores: $(nproc)"
+
           make -j"$(nproc)" \
             O=out \
             ARCH=arm64 \
@@ -269,33 +272,99 @@ jobs:
             ARCH=arm64 \
             kernelrelease
 
-      - name: Prepare release files
+      - name: Package AnyKernel3 flashable ZIP
         id: package
         shell: bash
+        env:
+          KERNEL_STRING: ${{ steps.variant.outputs.kernel_string }}
+          BANNER_NAME: ${{ steps.variant.outputs.banner_name }}
+          FOOTER_NAME: ${{ steps.variant.outputs.footer_name }}
         run: |
           set -euxo pipefail
 
           mkdir -p dist
 
           BASE="Pure-Breakdown-TB8505X-${{ steps.variant.outputs.variant }}-${{ steps.variant.outputs.short_sha }}"
+          AK_DIR="$RUNNER_TEMP/AnyKernel3-TB8505X"
 
-          cp \
-            out/arch/arm64/boot/Image.gz-dtb \
-            "dist/${BASE}-Image.gz-dtb"
+          cp out/arch/arm64/boot/Image.gz-dtb "dist/${BASE}-Image.gz-dtb"
+          cp out/.config "dist/${BASE}.config"
 
-          cp \
-            out/.config \
-            "dist/${BASE}.config"
+          git clone \
+            --depth 1 \
+            https://github.com/kin203/AnyKernel3-TB8505X.git \
+            "$AK_DIR"
+
+          AK_COMMIT="$(git -C "$AK_DIR" rev-parse HEAD)"
+          echo "AnyKernel3 template commit: $AK_COMMIT"
+
+          rm -rf "$AK_DIR/.git"
+          cp out/arch/arm64/boot/Image.gz-dtb "$AK_DIR/Image.gz-dtb"
+
+          export AK_DIR
+
+          python3 <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          path = Path(os.environ["AK_DIR"]) / "anykernel.sh"
+          text = path.read_text(encoding="utf-8")
+
+          text, n = re.subn(
+              r"^kernel\.string=.*$",
+              "kernel.string=" + os.environ["KERNEL_STRING"],
+              text,
+              count=1,
+              flags=re.MULTILINE,
+          )
+          if n != 1:
+              raise SystemExit("kernel.string not found exactly once")
+
+          old_banner = 'ui_print "   Pure-Breakdown Kernel v1"'
+          new_banner = 'ui_print "   ' + os.environ["BANNER_NAME"] + '"'
+          if old_banner not in text:
+              raise SystemExit("top Pure-Breakdown banner line not found")
+          text = text.replace(old_banner, new_banner, 1)
+
+          old_footer = 'ui_print "   Pure-Breakdown v1"'
+          new_footer = 'ui_print "   ' + os.environ["FOOTER_NAME"] + '"'
+          if old_footer not in text:
+              raise SystemExit("footer Pure-Breakdown line not found")
+          text = text.replace(old_footer, new_footer, 1)
+
+          path.write_text(text, encoding="utf-8")
+          PY
+
+          echo "=== AnyKernel variant ==="
+          grep -E 'kernel.string=|Pure-Breakdown' "$AK_DIR/anykernel.sh"
+
+          (
+            cd "$AK_DIR"
+            zip -r9 \
+              "$GITHUB_WORKSPACE/dist/${BASE}.zip" \
+              . \
+              -x "*.git*" \
+              -x "*.zip"
+          )
+
+          test -s "dist/${BASE}.zip"
 
           (
             cd dist
             sha256sum \
+              "${BASE}.zip" \
               "${BASE}-Image.gz-dtb" \
               "${BASE}.config" \
               > "${BASE}.sha256"
           )
 
+          unzip -l "dist/${BASE}.zip" | grep -E 'anykernel\.sh|Image\.gz-dtb'
+          unzip -p "dist/${BASE}.zip" anykernel.sh | grep 'kernel.string='
+
           echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          echo "zip=${BASE}.zip" >> "$GITHUB_OUTPUT"
+          echo "anykernel_commit=$AK_COMMIT" >> "$GITHUB_OUTPUT"
 
       - name: Generate changelog
         shell: bash
@@ -304,7 +373,6 @@ jobs:
 
           VARIANT="${{ steps.variant.outputs.variant }}"
           CURRENT_TAG="${{ steps.variant.outputs.tag }}"
-
           LAST_TAG=""
 
           while IFS= read -r TAG; do
@@ -322,7 +390,8 @@ jobs:
             echo "# ${{ steps.variant.outputs.release_name }}"
             echo
             echo "- Branch: \`${GITHUB_REF_NAME}\`"
-            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Kernel commit: \`${GITHUB_SHA}\`"
+            echo "- AnyKernel3 commit: \`${{ steps.package.outputs.anykernel_commit }}\`"
             echo "- Auto tag: \`${CURRENT_TAG}\`"
             echo "- Device: Lenovo Tab M8 TB-8505X"
             echo "- Kernel base: Linux 4.9.200"
@@ -351,9 +420,10 @@ jobs:
             echo
             echo "## Files"
             echo
-            echo "- \`${{ steps.package.outputs.base }}-Image.gz-dtb\`"
-            echo "- \`${{ steps.package.outputs.base }}.config\`"
-            echo "- \`${{ steps.package.outputs.base }}.sha256\`"
+            echo "- \`${{ steps.package.outputs.zip }}\` — flashable AnyKernel3 ZIP"
+            echo "- \`${{ steps.package.outputs.base }}-Image.gz-dtb\` — raw kernel image"
+            echo "- \`${{ steps.package.outputs.base }}.config\` — build config"
+            echo "- \`${{ steps.package.outputs.base }}.sha256\` — checksums"
             echo
             echo "> Auto-generated CI build. Keep a known-good stock boot image and working recovery before flashing."
           } > release-notes.md
