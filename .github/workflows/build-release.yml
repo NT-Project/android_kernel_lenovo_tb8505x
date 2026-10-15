@@ -239,7 +239,8 @@ jobs:
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export CC="$PWD/prebuilds/toolchain/clang-r353983c/bin/clang"
 
-          make -j4 \
+          echo "CPU cores: $(nproc)"
+          make -j"$(nproc)" \
             O=out \
             ARCH=arm64 \
             SUBARCH=arm64 \
