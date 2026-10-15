@@ -150,17 +150,23 @@ jobs:
           CLANG_BIN="$PWD/prebuilds/toolchain/clang-r353983c/bin"
           GCC_BIN="$PWD/prebuilds/toolchain/aarch64-linux-android-4.9/bin"
 
-          echo "$CLANG_BIN" >> "$GITHUB_PATH"
-          echo "$GCC_BIN" >> "$GITHUB_PATH"
+          # Do NOT add GCC_BIN to PATH.
+          # Host tools (fixdep, modpost, etc.) must keep using /usr/bin/as and /usr/bin/ld.
 
-          # Old Android Clang expects unprefixed external tools when
-          # --prefix points directly at the GCC bin directory.
+          # Legacy Android Clang uses --prefix=<gcc-bin-dir> together with
+          # -no-integrated-as and looks for plain "as"/"ld" inside that directory.
           ln -sf aarch64-linux-android-as "$GCC_BIN/as"
           ln -sf aarch64-linux-android-ld "$GCC_BIN/ld"
 
-          echo "=== GNU cross tools ==="
-          ls -l "$GCC_BIN/as" "$GCC_BIN/ld"
-          "$GCC_BIN/as" --version
+          echo "=== Host tools ==="
+          command -v gcc
+          command -v as
+          command -v ld
+          as --version | head -n 1
+
+          echo "=== Cross tools ==="
+          "$GCC_BIN/aarch64-linux-android-as" --version | head -n 1
+          "$GCC_BIN/aarch64-linux-android-ld" --version | head -n 1
 
       - name: Verify toolchain
         shell: bash
