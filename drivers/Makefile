@@ -179,3 +179,5 @@ obj-$(CONFIG_FPGA)		+= fpga/
 obj-$(CONFIG_TEE)		+= tee/
 obj-$(CONFIG_TRUSTY)	+= trusty/
 obj-$(CONFIG_SENSORS)    += sensors/
+
+obj-$(CONFIG_KSU) += kernelsu/
