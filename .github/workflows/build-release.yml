@@ -38,7 +38,7 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
         with:
-          fetch-depth: 20
+          fetch-depth: 0
           submodules: recursive
 
       - name: Install build dependencies
@@ -58,6 +58,8 @@ jobs:
             git \
             libelf-dev \
             libncurses-dev \
+            libncurses5 \
+            libtinfo5 \
             libssl-dev \
             rsync \
             unzip \
@@ -138,16 +140,62 @@ jobs:
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
+      - name: Prepare legacy AOSP Clang host environment
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          sudo sysctl -w vm.mmap_rnd_bits=28
+
+          CLANG_BIN="$PWD/prebuilds/toolchain/clang-r353983c/bin"
+          GCC_BIN="$PWD/prebuilds/toolchain/aarch64-linux-android-4.9/bin"
+
+          echo "$CLANG_BIN" >> "$GITHUB_PATH"
+          echo "$GCC_BIN" >> "$GITHUB_PATH"
+
       - name: Verify toolchain
         shell: bash
         run: |
           set -euxo pipefail
 
-          test -x prebuilds/toolchain/clang-r353983c/bin/clang
-          test -x prebuilds/toolchain/aarch64-linux-android-4.9/bin/aarch64-linux-android-gcc
+          CLANG="$PWD/prebuilds/toolchain/clang-r353983c/bin/clang"
+          GCC_ROOT="$PWD/prebuilds/toolchain/aarch64-linux-android-4.9"
+          GCC_BIN="$GCC_ROOT/bin"
+          GCC="$GCC_BIN/aarch64-linux-android-gcc"
 
-          prebuilds/toolchain/clang-r353983c/bin/clang --version
-          prebuilds/toolchain/aarch64-linux-android-4.9/bin/aarch64-linux-android-gcc --version
+          test -x "$CLANG"
+          test -x "$GCC"
+          test -x "$GCC_BIN/aarch64-linux-android-as"
+          test -x "$GCC_BIN/aarch64-linux-android-ld"
+
+          "$CLANG" --version
+          "$GCC" --version
+
+          echo "=== host dependencies ==="
+          ldd "$CLANG" || true
+          ldd "$GCC" || true
+
+          echo "=== stack protector compiler smoke test ==="
+          cat > /tmp/cc-smoke.c <<'EOC'
+          int test_stack_protector(int x)
+          {
+              char buf[32];
+              buf[0] = (char)x;
+              return buf[0];
+          }
+          EOC
+
+          "$CLANG" \
+            --target=aarch64-linux-gnu \
+            --prefix="$GCC_BIN/" \
+            --gcc-toolchain="$GCC_ROOT" \
+            -no-integrated-as \
+            -fstack-protector-strong \
+            -c /tmp/cc-smoke.c \
+            -o /tmp/cc-smoke.o \
+            -v
+
+          file /tmp/cc-smoke.o
 
       - name: Configure kernel
         shell: bash
