@@ -292,7 +292,7 @@ jobs:
 
           git clone \
             --depth 1 \
-            https://github.com/kin203/AnyKernel3-TB8505X.git \
+            https://github.com/NT-Project/AnyKernel3-TB8505X.git \
             "$AK_DIR"
 
           AK_COMMIT="$(git -C "$AK_DIR" rev-parse HEAD)"
