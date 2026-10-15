@@ -18,7 +18,7 @@
 
 static unsigned int fyTbl[NR_FREQ * NR_MT_CPU_DVFS][ARRAY_COL_SIZE] = {
 	/* Freq, Vproc, post_div, clk_div */
-	{ 2001, 81, 1, 1 },	/* LL */
+	{ 2201, 81, 1, 1 },	/* LL */
 	{ 1917, 76, 1, 1 },
 	{ 1834, 71, 1, 1 },
 	{ 1767, 67, 1, 1 },
